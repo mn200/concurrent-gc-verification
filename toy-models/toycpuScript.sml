@@ -21,7 +21,7 @@ val _ = Datatype`
     BINOP arithop regwd regc regc  (* destination, arg1, arg2 *)
   | LOAD regwd addr                (* load value from memory addr into reg *)
   | ILOAD regwd regwd              (* load value from addr in reg2 into reg *)
-  | LOADV regwd regc               (* load/copy value into reg *)
+  | MOV regwd regc                 (* move value into reg *)
   | STORE regwd addr               (* store contents of reg to address word64 *)
   | ISTORE regwd regwd           (* store contents of reg1 to address in reg2 *)
   | BRR flag int                 (* pc-relative branch on flag *)
@@ -36,6 +36,8 @@ val _ = Datatype`
     pc : inst_addr ;
     instructions : instruction list ;
     context : α ;  (* memory; other CPUs etc *)
+    mload : addr -> α -> (value # α) option ;
+    mstore : addr -> value -> α -> α option ;
     registers : value[regcount] ;
     flags : flag -> bool  (* flags are set by loads and binops *)
   |>
@@ -52,12 +54,14 @@ val evalop_def = Define`
   evalop MUL = words$word_mul
 `;
 
+(* POSF stays as "strictly positive" only because it makes the factorial
+   program shorter :-) *)
 val flag_update_def = Define`
   flag_update v = (ZF =+ (v = 0w)) o (POSF =+ (1w ≤ v))
 `;
 
 val step_def = Define`
-  step mload mstore s =
+  step s =
     if s.runstate <> RUNNING then s
     else if LENGTH s.instructions = s.pc then s with runstate := HALTED
     else if LENGTH s.instructions < s.pc then s with runstate := ERRORED
@@ -66,9 +70,7 @@ val step_def = Define`
       in
         case i of
         | BINOP opn tgt arg1 arg2 =>
-            let result = evalop opn (eval_regc s arg1) (eval_regc s arg2) in
-            let zf' = (result = 0w) in
-            let pf' = (result >= 0w)
+            let result = evalop opn (eval_regc s arg1) (eval_regc s arg2)
             in
               s with <| registers updated_by (w2n tgt :+ result) ;
                         flags updated_by (flag_update result) ;
@@ -87,14 +89,14 @@ val step_def = Define`
                            if tgt < 0 then s with runstate := ERRORED
                            else s with pc := Num tgt
                          else s with pc updated_by SUC
-        | LOADV tgt rc =>
+        | MOV tgt rc =>
             let value = eval_regc s rc
             in
               s with <| registers updated_by (w2n tgt :+ value) ;
                         flags updated_by (flag_update value) ;
                         pc updated_by SUC |>
         | LOAD tgt a =>
-            (case mload a s.context of
+            (case s.mload a s.context of
                 NONE => s with runstate := ERRORED
               | SOME (v,ctxt') =>
                   s with <| registers updated_by (w2n tgt :+ v) ;
@@ -102,7 +104,7 @@ val step_def = Define`
                             flags updated_by (flag_update v) ;
                             context := ctxt' |>)
         | ILOAD tgt areg =>
-            (case mload (s.registers ' (w2n areg)) s.context of
+            (case s.mload (s.registers ' (w2n areg)) s.context of
                 NONE => s with runstate := ERRORED
               | SOME (v,ctxt') =>
                   s with <| registers updated_by (w2n tgt :+ v) ;
@@ -110,12 +112,12 @@ val step_def = Define`
                             flags updated_by (flag_update v) ;
                             context := ctxt' |>)
         | STORE src a =>
-            (case mstore a (s.registers ' (w2n src)) s.context of
+            (case s.mstore a (s.registers ' (w2n src)) s.context of
                 NONE => s with runstate := ERRORED
               | SOME ctxt' => s with <| pc updated_by SUC ;
                                         context := ctxt' |>)
         | ISTORE src dest =>
-            (case mstore (s.registers ' (w2n dest))
+            (case s.mstore (s.registers ' (w2n dest))
                          (s.registers ' (w2n src))
                          s.context
              of
@@ -125,13 +127,14 @@ val step_def = Define`
 `;
 
 val state0_def = Define`
-  state0 c instrs = <| context := c;
-                       instructions := instrs;
-                       registers := FCP c. 0w;
-                       pc := 0 ;
-                       flags := K F ;
-                       runstate := RUNNING
-                    |>
+  state0 ld st c instrs = <|
+    context := c; mload := ld ; mstore := st ;
+    instructions := instrs;
+    registers := FCP c. 0w;
+    pc := 0 ;
+    flags := K F ;
+    runstate := RUNNING
+  |>
 `;
 
 val addprog_def = Define`
@@ -140,7 +143,7 @@ val addprog_def = Define`
 `;
 
 val factprog_def = Define`
-  factprog = [LOADV 1w (CNST 1w); LOAD 0w 0w;
+  factprog = [MOV 1w (CNST 1w); LOAD 0w 0w;
               BRR ZF 4; (* loop body *)
               BINOP MUL 1w (REG 1w) (REG 0w);
               BINOP SUB 0w (REG 0w) (CNST 1w);
@@ -152,7 +155,7 @@ val trivMload_def = Define`
 `;
 
 val trivMstore_def = Define`
-  trivMstore v addr mem = SOME ((v =+ addr) mem)
+  trivMstore v addr mem = SOME ((addr =+ v) mem)
 `;
 
 (* e.g.,
@@ -170,9 +173,9 @@ val fcp_norm = Q.store_thm(
    (x :+ v1) ((x :+ v2) f) = (x :+ v1) f`,
   simp[fcpTheory.FCP_UPDATE_COMMUTES, fcpTheory.FCP_UPDATE_EQ]);
 
-EVAL ``FUNPOW (step trivMload trivMstore)
+EVAL ``FUNPOW step
               50
-              (state0 ((0w =+ 10w) (K 0w)) factprog)``;
+              (state0 trivMload trivMstore ((0w =+ 10w) (K 0w)) factprog)``;
 
 (* 10! is indeed 0x375F00 *)
 *)
