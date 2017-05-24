@@ -1,6 +1,6 @@
 open HolKernel Parse boolLib bossLib;
 
-open toycpuTheory llistTheory
+open toycpuTheory llistTheory wordsLib
 
 val _ = new_theory "multiCAI";
   (* multiple CPUs, Concurrent Atomic Interleaving updates *)
@@ -84,7 +84,7 @@ val LTL_HD_list_repeat = Q.store_thm(
   simp[LTL_HD_LAPPEND] >> Cases_on `l` >> fs[LTL_HD_LCONS]);
 
 (*
-EVAL ``FUNPOW (step multiCAI_mload multiCAI_mstore) 3
+EVAL ``FUNPOW (step multiCAI_mload multiCAI_mstore) 20
               (state0 <| mem := (0w =+ 10w) (K 0w);
                          oracle := list_repeat [[OTHER_STORE 1w 20w;
                                                  OTHER_STORE 2w 30w]] |>
