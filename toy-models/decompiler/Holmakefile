@@ -1,0 +1,20 @@
+INCLUDES = .. \
+           $(HOLDIR)/examples/machine-code/hoare-triple \
+           $(HOLDIR)/examples/machine-code/decompiler
+
+OPTIONS = QUIT_ON_FAILURE
+
+ifdef POLY
+HOLHEAP = heap
+EXTRA_CLEANS = $(HOLHEAP) $(HOLHEAP).o
+all: $(HOLHEAP)
+
+BARE_THYS = ../toycpuTheory \
+            $(HOLDIR)/examples/machine-code/decompiler/decompilerLib \
+            $(HOLDIR)/examples/machine-code/hoare-triple/progTheory \
+            $(HOLDIR)/examples/machine-code/hoare-triple/helperLib
+DEPS = $(patsubst %,%.uo,$(BARE_THYS)) $(PARENT_HOLHEAP)
+
+$(HOLHEAP): $(DEPS)
+	$(protect $(HOLDIR)/bin/buildheap) -o $(HOLHEAP) $(BARE_THYS)
+endif

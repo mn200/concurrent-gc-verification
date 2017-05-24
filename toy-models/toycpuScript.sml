@@ -12,7 +12,7 @@ val _ = type_abbrev("inst_addr", ``:num``)
 val _ = type_abbrev("value", ``:word64``)
 
 val _ = Datatype`arithop = ADD | SUB | MUL`
-val _ = Datatype`flag = ZF | POSF`
+val _ = Datatype`flag = ZF | SF`
 val _ = Datatype`regc = REG regwd | CNST value`
 val _ = Datatype`runstate = HALTED | ERRORED | RUNNING`
 
@@ -57,7 +57,7 @@ val evalop_def = Define`
 (* POSF stays as "strictly positive" only because it makes the factorial
    program shorter :-) *)
 val flag_update_def = Define`
-  flag_update v = (ZF =+ (v = 0w)) o (POSF =+ (1w ≤ v))
+  flag_update v = (ZF =+ (v = 0w)) o (SF =+ word_msb v)
 `;
 
 val step_def = Define`
@@ -109,7 +109,6 @@ val step_def = Define`
               | SOME (v,ctxt') =>
                   s with <| registers updated_by (w2n tgt :+ v) ;
                             pc updated_by SUC ;
-                            flags updated_by (flag_update v) ;
                             context := ctxt' |>)
         | STORE src a =>
             (case s.mstore a (s.registers ' (w2n src)) s.context of
@@ -147,7 +146,7 @@ val factprog_def = Define`
               BRR ZF 4; (* loop body *)
               BINOP MUL 1w (REG 1w) (REG 0w);
               BINOP SUB 0w (REG 0w) (CNST 1w);
-              BRR POSF (-2)]
+              BRR SF (-2)]
 `;
 
 val trivMload_def = Define`
