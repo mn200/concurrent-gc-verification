@@ -13,8 +13,17 @@ val _ = type_abbrev("value", ``:word64``)
 
 val _ = Datatype`arithop = ADD | SUB | MUL`
 val _ = Datatype`flag = ZF | SF`
+
+val flag_norm = Q.store_thm(
+  "flag_norm[compute]",
+  `(SF =+ v1) ((ZF =+ v2) f) = (ZF =+ v2) ((SF =+ v1) f) ∧
+   (SF =+ v1) ((SF =+ v2) f) = (SF =+ v1) f ∧
+   (ZF =+ v1) ((ZF =+ v2) f) = (ZF =+ v1) f`,
+  simp[FUN_EQ_THM, combinTheory.UPDATE_def] >> Cases >> simp[]);
+
 val _ = Datatype`regc = REG regwd | CNST value`
 val _ = Datatype`runstate = HALTED | ERRORED | RUNNING`
+val _ = Datatype`fence_type = ACQ | REL`
 
 val _ = Datatype`
   instruction =
@@ -23,6 +32,7 @@ val _ = Datatype`
   | ILOAD regwd regwd              (* load value from addr in reg2 into reg *)
   | MOV regwd regc                 (* move value into reg *)
   | STORE regwd addr               (* store contents of reg to address word64 *)
+  | FENCE fence_type             (* perform either acquire or release fence *)
   | ISTORE regwd regwd           (* store contents of reg1 to address in reg2 *)
   | BRR flag int                 (* pc-relative branch on flag *)
   | BRA flag inst_addr           (* absolute branch on flag *)
@@ -31,13 +41,39 @@ val _ = Datatype`
 `
 
 val _ = Datatype`
+  memory = <| context : α ;
+              mload : addr -> α -> (value # α) option ;
+              mstore : addr -> value -> α -> α option ;
+              mfence_acquire : α -> α ;
+              mfence_release : α -> α
+           |>
+`;
+
+val memload_def = Define‘
+  memload m a =
+    case m.mload a m.context of
+      SOME (v,c) => SOME(v, m with context := c)
+    | NONE => NONE
+’;
+
+val memstore_def = Define‘
+  memstore m a v =
+    OPTION_MAP (λc. m with context := c) (m.mstore a v m.context)
+’;
+
+val memfence_def = Define‘
+  memfence m flavour =
+    case flavour of
+        ACQ => m with context updated_by m.mfence_acquire
+      | REL => m with context updated_by m.mfence_release
+’;
+
+val _ = Datatype`
   cpustate = <|
     runstate : runstate ;
     pc : inst_addr ;
     instructions : instruction list ;
-    context : α ;  (* memory; other CPUs etc *)
-    mload : addr -> α -> (value # α) option ;
-    mstore : addr -> value -> α -> α option ;
+    memory : α memory ;  (* memory; other CPUs etc *)
     registers : value[regcount] ;
     flags : flag -> bool  (* flags are set by loads and binops *)
   |>
@@ -54,8 +90,6 @@ val evalop_def = Define`
   evalop MUL = words$word_mul
 `;
 
-(* POSF stays as "strictly positive" only because it makes the factorial
-   program shorter :-) *)
 val flag_update_def = Define`
   flag_update v = (ZF =+ (v = 0w)) o (SF =+ word_msb v)
 `;
@@ -96,38 +130,38 @@ val step_def = Define`
                         flags updated_by (flag_update value) ;
                         pc updated_by SUC |>
         | LOAD tgt a =>
-            (case s.mload a s.context of
+            (case memload s.memory a of
                 NONE => s with runstate := ERRORED
-              | SOME (v,ctxt') =>
+              | SOME (v,m) =>
                   s with <| registers updated_by (w2n tgt :+ v) ;
                             pc updated_by SUC ;
                             flags updated_by (flag_update v) ;
-                            context := ctxt' |>)
+                            memory := m |>)
         | ILOAD tgt areg =>
-            (case s.mload (s.registers ' (w2n areg)) s.context of
+            (case memload s.memory (s.registers ' (w2n areg)) of
                 NONE => s with runstate := ERRORED
-              | SOME (v,ctxt') =>
+              | SOME (v,m) =>
                   s with <| registers updated_by (w2n tgt :+ v) ;
                             pc updated_by SUC ;
-                            context := ctxt' |>)
+                            flags updated_by (flag_update v) ;
+                            memory := m
+                         |>)
         | STORE src a =>
-            (case s.mstore a (s.registers ' (w2n src)) s.context of
+            (case memstore s.memory a (s.registers ' (w2n src)) of
                 NONE => s with runstate := ERRORED
-              | SOME ctxt' => s with <| pc updated_by SUC ;
-                                        context := ctxt' |>)
+              | SOME m => s with <| pc updated_by SUC ; memory := m |>)
         | ISTORE src dest =>
-            (case s.mstore (s.registers ' (w2n dest))
-                         (s.registers ' (w2n src))
-                         s.context
+            (case memstore s.memory
+                           (s.registers ' (w2n dest))
+                           (s.registers ' (w2n src))
              of
                 NONE => s with runstate := ERRORED
-              | SOME ctxt' => s with <| pc updated_by SUC ;
-                                        context := ctxt' |>)
+              | SOME m => s with <| pc updated_by SUC ; memory := m |>)
 `;
 
 val state0_def = Define`
-  state0 ld st c instrs = <|
-    context := c; mload := ld ; mstore := st ;
+  state0 m instrs = <|
+    memory := m;
     instructions := instrs;
     registers := FCP c. 0w;
     pc := 0 ;
@@ -143,40 +177,33 @@ val addprog_def = Define`
 
 val factprog_def = Define`
   factprog = [MOV 1w (CNST 1w); LOAD 0w 0w;
-              BRR ZF 4; (* loop body *)
+              BRR ZF 5; (* loop body *)
               BINOP MUL 1w (REG 1w) (REG 0w);
               BINOP SUB 0w (REG 0w) (CNST 1w);
-              BRR SF (-2)]
+              BRR ZF 2; JMPR (-3); STORE 1w 1w]
 `;
 
-val trivMload_def = Define`
-  trivMload a mem = SOME (mem a, mem)
-`;
-
-val trivMstore_def = Define`
-  trivMstore v addr mem = SOME ((addr =+ v) mem)
-`;
-
-(* e.g.,
-
-val flag_norm = Q.store_thm(
-  "flag_norm[compute]",
-  `(POSF =+ v1) ((ZF =+ v2) f) = (ZF =+ v2) ((POSF =+ v1) f) ∧
-   (POSF =+ v1) ((POSF =+ v2) f) = (POSF =+ v1) f ∧
-   (ZF =+ v1) ((ZF =+ v2) f) = (ZF =+ v1) f`,
-  simp[FUN_EQ_THM, combinTheory.UPDATE_def] >> Cases >> simp[]);
+val trivM_def = Define‘
+  trivM m = <| context := m ;
+               mfence_acquire := I ;
+               mfence_release := I ;
+               mload := (λa m. SOME (m a, m)) ;
+               mstore := (λa v m. SOME ((a =+ v) m))
+            |>
+’;
 
 val fcp_norm = Q.store_thm(
   "fcp_norm[compute]",
-  `(1 :+ v1) ((0 :+ v2) f) = (0 :+ v2) ((1 :+ v1) f) ∧
-   (x :+ v1) ((x :+ v2) f) = (x :+ v1) f`,
+  ‘(1 :+ v1) ((0 :+ v2) f) = (0 :+ v2) ((1 :+ v1) f) ∧
+   (x :+ v1) ((x :+ v2) f) = (x :+ v1) f’,
   simp[fcpTheory.FCP_UPDATE_COMMUTES, fcpTheory.FCP_UPDATE_EQ]);
 
-EVAL ``FUNPOW step
+val fact50 = save_thm(
+  "fact50",
+  EVAL “FUNPOW step
               50
-              (state0 trivMload trivMstore ((0w =+ 10w) (K 0w)) factprog)``;
+              (state0 (trivM ((0w =+ 10w) (K 0w))) factprog)”);
 
 (* 10! is indeed 0x375F00 *)
-*)
 
 val _ = export_theory();
