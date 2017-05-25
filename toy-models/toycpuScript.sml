@@ -204,6 +204,6 @@ val fact50 = save_thm(
               50
               (state0 (trivM ((0w =+ 10w) (K 0w))) factprog)”);
 
-(* 10! is indeed 0x375F00 *)
+(*  10! is indeed 0x375F00  *)
 
 val _ = export_theory();
