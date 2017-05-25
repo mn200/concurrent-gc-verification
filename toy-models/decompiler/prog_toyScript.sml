@@ -22,8 +22,7 @@ val _ = Datatype `
          | Inst num (instruction option)
          | Reg word2 word64
          | Flag flag bool
-         | Context (addr -> α -> (value # α) option)
-                   (addr -> value -> α -> α option) α
+         | Context (α memory)
 `
 
 val toy_el_11 = DB.fetch "-" "toy_el_11";
@@ -53,7 +52,7 @@ val toy2set'_def = Define `
     IMAGE (\a. Inst a (toy_read_inst a s)) is UNION
     IMAGE (\a. Reg a (toy_read_reg a s)) rg UNION
     IMAGE (\a. Flag a (toy_read_flag a s)) fl UNION
-    (if cc then { Context s.mload s.mstore s.context } else {})`;
+    (if cc then { Context s.memory } else {})`;
 
 val toy2set_def   = Define `toy2set s = toy2set' (T,T,UNIV,UNIV,UNIV,T) s`;
 val toy2set''_def = Define `toy2set'' x s = toy2set s DIFF toy2set' x s`;
@@ -88,7 +87,7 @@ val SUBSET_toy2set = prove(
         { a |a| ?x. Inst a x IN u },
         { a |a| ?x. Reg a x IN u },
         { a |a| ?x. Flag a x IN u },
-        (?y1 y2 y3. Context y1 y2 y3 IN u))`
+        (?m. Context m IN u))`
   \\ FULL_SIMP_TAC std_ss [toy2set'_def,toy2set_def,EXTENSION,SUBSET_DEF,IN_IMAGE,
        IN_UNION,GSPECIFICATION,IN_INSERT,NOT_IN_EMPTY,IN_UNIV,PUSH_IN_INTO_IF]
   \\ STRIP_TAC \\ ASM_REWRITE_TAC [] \\ EQ_TAC \\ REPEAT STRIP_TAC THEN1 METIS_TAC []
@@ -121,12 +120,11 @@ val IN_toy2set = store_thm("IN_toy2set[simp]",``
   (!a x s. Flag a x IN (toy2set s) <=> (x = toy_read_flag a s)) /\
   (!a x s. Flag a x IN (toy2set' (rs,pc,is,rg,fl,cc) s) <=> (x = toy_read_flag a s) /\ a IN fl) /\
   (!a x s. Flag a x IN (toy2set'' (rs,pc,is,rg,fl,cc) s) <=> (x = toy_read_flag a s) /\ ~(a IN fl)) /\
-  (!x1 x2 x3 s. Context x1 x2 x3 IN (toy2set s) <=>
-                x1 = s.mload /\ x2 = s.mstore /\ x3 = s.context) /\
-  (!x1 x2 x3 s. Context x1 x2 x3 IN (toy2set' (rs,pc,is,rg,fl,cc) s) <=>
-                x1 = s.mload /\ x2 = s.mstore /\ x3 = s.context /\ cc) /\
-  (!x1 x2 x3 s. Context x1 x2 x3 IN (toy2set'' (rs,pc,is,rg,fl,cc) s) <=>
-                x1 = s.mload /\ x2 = s.mstore /\ x3 = s.context /\ ~cc)``,
+  (!m s. Context m IN (toy2set s) <=> m = s.memory) /\
+  (!m s. Context m IN (toy2set' (rs,pc,is,rg,fl,cc) s) <=>
+                m = s.memory /\ cc) /\
+  (!m s. Context m IN (toy2set'' (rs,pc,is,rg,fl,cc) s) <=>
+                m = s.memory /\ ~cc)``,
   SRW_TAC [] [toy2set'_def,toy2set''_def,toy2set_def,IN_UNION,
      IN_INSERT,NOT_IN_EMPTY,IN_DIFF,PUSH_IN_INTO_IF] \\ METIS_TAC []);
 
@@ -160,8 +158,8 @@ val toy2set''_11 = prove(
         (?x. Flag a x IN toy2set'' (rs',pc',is',rg',fl',cc') s')` by fs []
     \\ rev_full_simp_tac std_ss [])
   THEN1
-   (`(?x1 x2 x3. Context x1 x2 x3 IN toy2set'' (rs,pc,is,rg,fl,cc) s) <>
-     (?x1 x2 x3. Context x1 x2 x3 IN toy2set'' (rs',pc',is',rg',fl',cc') s')` by fs []
+   (`(?m. Context m IN toy2set'' (rs,pc,is,rg,fl,cc) s) <>
+     (?m. Context m IN toy2set'' (rs',pc',is',rg',fl',cc') s')` by fs []
     \\ rev_full_simp_tac std_ss []));
 
 val DELETE_toy2set = store_thm("DELETE_toy2set[simp]",``
@@ -175,7 +173,7 @@ val DELETE_toy2set = store_thm("DELETE_toy2set[simp]",``
        (toy2set' (rs,pc,is,rg DELETE r,fl,cc) s)) /\
   (!s. (toy2set' (rs,pc,is,rg,fl,cc) s) DELETE Flag f (toy_read_flag f s) =
        (toy2set' (rs,pc,is,rg,fl DELETE f,cc) s)) /\
-  (!s. (toy2set' (rs,pc,is,rg,fl,cc) s) DELETE Context s.mload s.mstore s.context =
+  (!s. (toy2set' (rs,pc,is,rg,fl,cc) s) DELETE Context s.memory =
        (toy2set' (rs,pc,is,rg,fl,F) s))``,
   SRW_TAC [] [toy2set'_def,EXTENSION,IN_UNION,GSPECIFICATION,LEFT_AND_OVER_OR,
     EXISTS_OR_THM,IN_DELETE,IN_INSERT,NOT_IN_EMPTY,PUSH_IN_INTO_IF]
@@ -199,9 +197,9 @@ val tPC_def = Define `tPC x = SEP_EQ { PC x }`
 val tInst_def = Define `tInst i x = SEP_EQ { Inst i x }`
 val tReg_def = Define `tReg i x = SEP_EQ { Reg i x }`
 val tFlag_def = Define `tFlag i x = SEP_EQ { Flag i x }`
-val tContext_def = Define `tContext x1 x2 x3 = SEP_EQ { Context x1 x2 x3 }`
+val tContext_def = Define `tContext m = SEP_EQ { Context m }`
 
-val Flags_def = Define `tFlags (zf,posf) = tFlag ZF zf * tFlag SF posf`;
+val tFlags_def = Define `tFlags (zf,posf) = tFlag ZF zf * tFlag SF posf`;
 
 val TOY_NEXT_REL_def = Define `
   TOY_NEXT_REL s s' = (step s = s')`;
@@ -248,9 +246,8 @@ val STAR_toy2set = store_thm("STAR_toy2set",
       y = s.runstate /\ rs /\ p (toy2set' (F,pc,is,rg,fl,cc) s)) /\
     ((tPC v * p) (toy2set' (rs,pc,is,rg,fl,cc) s) <=>
       v = s.pc /\ pc /\ p (toy2set' (rs,F,is,rg,fl,cc) s)) /\
-    ((tContext x1 x2 x3 * p) (toy2set' (rs,pc,is,rg,fl,cc) s) <=>
-      x1 = s.mload /\ x2 = s.mstore /\ x3 = s.context /\ cc /\
-      p (toy2set' (rs,pc,is,rg,fl,F) s)) /\
+    ((tContext m * p) (toy2set' (rs,pc,is,rg,fl,cc) s) <=>
+      m = s.memory /\ cc /\ p (toy2set' (rs,pc,is,rg,fl,F) s)) /\
     ((tFlag f x * p) (toy2set' (rs,pc,is,rg,fl,cc) s) <=>
       (x = toy_read_flag f s) /\ f IN fl /\
       p (toy2set' (rs,pc,is,rg,fl DELETE f,cc) s)) /\
@@ -268,7 +265,7 @@ val STAR_toy2set = store_thm("STAR_toy2set",
 val tFlags_HIDE = store_thm("tFlags_HIDE",
   ``~tFlags = ~tFlag ZF * ~tFlag SF``,
   SIMP_TAC std_ss [SEP_HIDE_def,tFlag_def,SEP_CLAUSES,FUN_EQ_THM]
-  \\ SIMP_TAC std_ss [SEP_EXISTS,tFlag_def,EXISTS_PROD,Flags_def]);
+  \\ SIMP_TAC std_ss [SEP_EXISTS,tFlag_def,EXISTS_PROD,tFlags_def]);
 
 val TOY_SPEC_CODE =
   SPEC_CODE |> ISPEC ``TOY_MODEL``
@@ -352,11 +349,13 @@ val MOV_REG = store_thm("MOV_REG",
 
 val ILOAD = store_thm("ILOAD",
   ``SPEC TOY_MODEL
-      (PC p * tReg a0 r0 * tReg a1 r1 * tContext mload mstore ctxt *
-       cond (IS_SOME (mload r1 ctxt)))
+      (PC p * tReg a0 r0 * tReg a1 r1 * tContext m *
+       tFlag ZF zf * tFlag SF sf * cond (IS_SOME (memload m r1)))
       {(p,ILOAD a0 a1)}
-      (PC (p+1) * tReg a0 (FST (THE (mload r1 ctxt))) * tReg a1 r1 *
-       tContext mload mstore (SND (THE (mload r1 ctxt))))``,
+      (PC (p+1) * tReg a0 (FST (THE (memload m r1))) * tReg a1 r1 *
+       tContext (SND (THE (memload m r1))) *
+       tFlag ZF (FST (THE (memload m r1)) = 0w) *
+       tFlag SF (word_msb (FST (THE (memload m r1)))))``,
   fs [SPEC_MOVE_COND] \\ strip_tac
   \\ match_mp_tac IMP_TOY_SPEC_LEMMA
   \\ fs [GSYM STAR_ASSOC,STAR_toy2set,PC_def]
@@ -369,13 +368,17 @@ val ILOAD = store_thm("ILOAD",
      \\ fs [fcpTheory.FCP_BETA,fcpTheory.FCP_UPDATE_def] \\ EVAL_TAC)
   THEN1 (Cases_on `a1` \\ Cases_on `a0`
      \\ fs [fcpTheory.FCP_BETA,fcpTheory.FCP_UPDATE_def] \\ EVAL_TAC)
+  THEN1 simp[APPLY_UPDATE_THM]
+  THEN1 simp[APPLY_UPDATE_THM]
   \\ simp [EXTENSION]
   \\ Cases
   \\ fs [toy_read_inst_def,toy_read_reg_def,toy_read_flag_def,flag_update_def,
          eval_regc_def]
-  \\ Cases_on `c` \\ Cases_on `a0`
-  \\ fs [fcpTheory.FCP_BETA,fcpTheory.FCP_UPDATE_def] \\ EVAL_TAC
-  \\ rw [] \\ fs [])
+  >- (Cases_on `c` \\ Cases_on `a0`
+      \\ fs [fcpTheory.FCP_BETA,fcpTheory.FCP_UPDATE_def] \\ EVAL_TAC
+      \\ rw [] \\ fs [])
+  >- (Cases_on `f ∈ fl` >> simp[] >> `f ≠ ZF ∧ f ≠ SF` by metis_tac[] >>
+      simp[APPLY_UPDATE_THM]))
 
 val ILOAD' = store_thm("ILOAD'",
   ``SPEC TOY_MODEL
